@@ -12,7 +12,7 @@ import pandas as pd
 from flask import Flask, Response, request, redirect, url_for, jsonify, send_file, make_response, render_template_string
 from werkzeug.utils import secure_filename
 
-# added from top------main script
+# added from top------main script from Here working fine
 from app.core.logger import (
     ensure_log_headers,
     write_log_row
