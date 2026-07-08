@@ -25,6 +25,16 @@ from app.ai_engine.recognition.face import (
 from app.services.alert_service import (
     alert_service
 )
+from app.camera.stream import (
+    open_capture,
+    blank_jpeg
+)
+from app.ai_engine.analytics.behavior import (
+    point_in_poly,
+    bbox_center,
+    crosses_line,
+    zone_of_point
+)
 
 try:
     import cv2
@@ -85,37 +95,7 @@ age_net = model_manager.age_net
 gender_net = model_manager.gender_net
 
 # ---------- helpers ----------
-def point_in_poly(pt, poly):
-    x,y = pt; inside=False
-    n=len(poly)
-    for i in range(n):
-        x1,y1 = poly[i]; x2,y2 = poly[(i+1)%n]
-        cond = ((y1>y)!=(y2>y)) and (x < (x2-x1)*(y-y1)/(y2-y1+1e-9)+x1)
-        if cond:
-            inside = not inside
-    return inside
-
-def bbox_center(bb):
-    x1,y1,x2,y2 = bb; return ((x1+x2)//2, (y1+y2)//2)
-
-def crosses_line(p_prev, p_now, line):
-    x3,y3,x4,y4 = line
-    x1,y1 = p_prev; x2,y2 = p_now
-    def ccw(A,B,C): return (C[1]-A[1])*(B[0]-A[0]) > (B[1]-A[1])*(C[0]-A[0])
-    A=(x1,y1); B=(x2,y2); C=(x3,y3); D=(x4,y4)
-    return ccw(A,C,D)!=ccw(B,C,D) and ccw(A,B,C)!=ccw(A,B,D)
-
-def zone_of_point(pt):
-    for zn, poly in ZONES.items():
-        try:
-            if point_in_poly(pt, poly):
-                if zn == 'cloth':
-                    return 'Cloth Section'
-                return zn.title() if zn.islower() else zn
-        except Exception:
-            continue
-    return "Cloth Section"
-
+#added this code to behaviour.py
 # ---------- state ----------
 last_detections = []
 entered_hourly = {}
@@ -124,46 +104,13 @@ tracks = {}
 next_tid = 1
 
 # ---------- capture & detection ----------
-def open_capture(src):
-    if cv2 is None:
-        return None
-    try:
-        # allow both integer camera indices and rtsp/http urls
-        if isinstance(src, int) or (isinstance(src, str) and str(src).isdigit()):
-            cap = cv2.VideoCapture(int(src), apiPreference=cv2.CAP_V4L2)
-            if not cap.isOpened():
-                cap.release()
-                cap = cv2.VideoCapture(int(src), apiPreference=cv2.CAP_ANY)
-            if cap.isOpened():
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-                return cap
-        else:
-            # RTSP/HTTP: prefer ffmpeg backend + tcp
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|stimeout;20000000|buffer_size;102400"
-            cap = cv2.VideoCapture(src, apiPreference=cv2.CAP_FFMPEG)
-            return cap
-    except Exception as e:
-        print("open_capture error:", e)
-    return None
-
-def _blank_jpeg(text="Camera not available"):
-    if cv2 is None:
-        return b''
-    blank = np.zeros((360,640,3), dtype=np.uint8)
-    cv2.putText(blank, text, (10,180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
-    _, b = cv2.imencode(".jpg", blank)
-    return b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + b.tobytes() + b'\r\n'
-
-
 
 def generate_frames():
     global last_detections, tracks, next_tid, entered_hourly, exited_hourly, alerts
     cap = open_capture(IP_CAMERA_URL)
     if cap is None or not cap.isOpened():
         while True:
-            yield _blank_jpeg("Camera not available")
+            yield blank_jpeg("Camera not available")
             time.sleep(1.0)
     miss = 0
     while True:
@@ -179,11 +126,11 @@ def generate_frames():
                 cap = open_capture(IP_CAMERA_URL)
                 miss = 0
                 if cap is None or not cap.isOpened():
-                    yield _blank_jpeg("Reconnecting...")
+                    yield blank_jpeg("Reconnecting...")
                     time.sleep(1.0)
                     continue
             else:
-                yield _blank_jpeg("Reconnecting...")
+                yield blank_jpeg("Reconnecting...")
                 time.sleep(0.2)
                 continue
         else:
@@ -347,7 +294,7 @@ def generate_frames():
             _, buffer = cv2.imencode('.jpg', frame)
             yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         else:
-            yield _blank_jpeg("No OpenCV")
+            yield blank_jpeg("No OpenCV")
         gc.collect()
 
 # ---------- HTML (single-file SPA) ----------
