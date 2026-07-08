@@ -22,20 +22,24 @@ from app.ai_engine.recognition.face import (
     face_manager
 )
 
-# optional detection libs (try/except so script still runs if missing)
+from app.services.alert_service import (
+    alert_service
+)
+
 try:
     import cv2
 except Exception:
     cv2 = None
+
 try:
     from ultralytics import YOLO
 except Exception:
     YOLO = None
+
 try:
     import face_recognition
 except Exception:
     face_recognition = None
-
 # ---------------- CONFIG ----------------
 
 from app.core.config import *
@@ -54,30 +58,15 @@ os.makedirs(KNOWN_IMAGES_DIR, exist_ok=True)
 
 face_manager.ensure_faces_csv()
 # ---------- load models ----------
-print("Loading models (YOLO may take a few seconds)...")
-model = None
-if YOLO is not None:
-    try:
-        model = YOLO(MODEL_PATH)
-    except Exception as e:
-        print("YOLO model load failed:", e)
-else:
-    print("ultralytics YOLO not installed; detection disabled until installed.")
-
-age_net = None
-gender_net = None
-if cv2 is not None:
-    try:
-        if os.path.exists(AGE_MODEL_PROTO) and os.path.exists(AGE_MODEL_BIN):
-            age_net = cv2.dnn.readNetFromCaffe(AGE_MODEL_PROTO, AGE_MODEL_BIN)
-    except Exception:
-        age_net = None
-    try:
-        if os.path.exists(GENDER_MODEL_PROTO) and os.path.exists(GENDER_MODEL_BIN):
-            gender_net = cv2.dnn.readNetFromCaffe(GENDER_MODEL_PROTO, GENDER_MODEL_BIN)
-    except Exception:
-        gender_net = None
-
+from app.ai_engine.model_manager import (
+    model_manager
+)
+# below line for test
+alert_service.add_alert(
+    "test",
+    "Test alert generated during startup"
+)
+#above lines for test
 # ---------- known faces ----------
 
 known_encodings, known_meta = (
@@ -86,6 +75,14 @@ known_encodings, known_meta = (
 # ---------- logging ----------
 
 ensure_log_headers()
+
+model_manager.load_models()
+
+model = model_manager.yolo
+
+age_net = model_manager.age_net
+
+gender_net = model_manager.gender_net
 
 # ---------- helpers ----------
 def point_in_poly(pt, poly):
@@ -121,7 +118,6 @@ def zone_of_point(pt):
 
 # ---------- state ----------
 last_detections = []
-alerts = []
 entered_hourly = {}
 exited_hourly = {}
 tracks = {}
@@ -160,23 +156,7 @@ def _blank_jpeg(text="Camera not available"):
     _, b = cv2.imencode(".jpg", blank)
     return b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + b.tobytes() + b'\r\n'
 
-def add_alert_row_and_memory(alert_type, info, zone="", name=""):
-    rec = {"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "alert_type": alert_type, "info": info, "zone": zone, "name": name}
-    if len(alerts)>0 and alerts[0]["alert_type"]==rec["alert_type"] and alerts[0]["info"]==rec["info"]:
-        pass
-    else:
-        alerts.insert(0, rec)
-        write_log_row({
-            "timestamp": rec["timestamp"],
-            "name": name or alert_type,
-            "categories": "",
-            "zone": zone or "Cloth Section",
-            "alert": alert_type,
-            "gender": "",
-            "gender_conf": "",
-            "age_bucket": "",
-            "detection_type": alert_type
-        })
+
 
 def generate_frames():
     global last_detections, tracks, next_tid, entered_hourly, exited_hourly, alerts
@@ -305,10 +285,10 @@ def generate_frames():
                     cats_norm = [str(c).strip().lower() for c in cats] if cats else []
                     if "vip" in cats_norm:
                         info = f"VIP detected: {person_name} in {z}. Suggest priority assistance."
-                        add_alert_row_and_memory("vip", info, zone=z, name=person_name)
+                        alert_service.add_alert("vip", info, zone=z, name=person_name)
                     if "highbuyer" in cats_norm:
                         info = f"High-buyer candidate: {person_name} in {z}."
-                        add_alert_row_and_memory("highbuyer", info, zone=z, name=person_name)
+                        alert_service.add_alert("highbuyer", info, zone=z, name=person_name)
                     cx,cy = bbox_center((x1,y1,x2,y2))
                     det_list.append({"center": (cx,cy), "bbox": (x1,y1,x2,y2), "gender": gender, "age": age_bucket})
                 except Exception:
@@ -358,9 +338,9 @@ def generate_frames():
         queue_count = sum(1 for tr in tracks.values() if tr.get("now") and point_in_poly(tr["now"], ZONES["billing"]))
         crowd_count = sum(1 for tr in tracks.values() if tr.get("now") and point_in_poly(tr["now"], ZONES["crowd1"]))
         if queue_count > QUEUE_THRESH:
-            add_alert_row_and_memory("queue_overflow", f"Queue overflow: {queue_count} persons at billing. Open extra counter.", zone="billing")
+            alert_service.add_alert("queue_overflow", f"Queue overflow: {queue_count} persons at billing. Open extra counter.", zone="billing")
         if crowd_count > CROWD_THRESH:
-            add_alert_row_and_memory("crowd", f"Crowd: {crowd_count} persons in crowd area. Check safety.", zone="crowd1")
+            alert_service.add_alert("crowd", f"Crowd: {crowd_count} persons in crowd area. Check safety.", zone="crowd1")
 
         last_detections = detections[:16]
         if cv2 is not None:
@@ -747,7 +727,7 @@ def alerts_api():
         print("alerts_api read error:", e)
 
     # prepend in-memory alerts (limit)
-    for a in alerts[:10]:
+    for a in alert_service.alerts[:10]:
         combined.insert(0, a)
 
     # dedupe while preserving order
