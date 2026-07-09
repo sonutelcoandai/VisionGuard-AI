@@ -45,6 +45,17 @@ from app.ai_engine.analytics.gender import (
 from app.ai_engine.detector.person import (
     PersonDetector
 )
+from app.api.cameras import (
+    cameras_bp
+)
+import app.api.cameras as cameras_module
+
+from app.api.events import (
+    events_bp
+)
+import app.api.events as events_module
+
+
 
 try:
     import cv2
@@ -300,6 +311,10 @@ def generate_frames():
         else:
             yield blank_jpeg("No OpenCV")
         gc.collect()
+cameras_module.generate_frames_func = (
+    generate_frames
+)
+
 
 # ---------- HTML (single-file SPA) ----------
 HTML = r"""
@@ -595,6 +610,16 @@ async function renderPopularTimes(){
 # ---------- Flask endpoints ----------
 app = Flask(__name__, static_folder="static")
 
+app.register_blueprint(
+    cameras_bp
+)
+
+app.register_blueprint(
+    events_bp
+)
+
+
+
 # serve SPA on common routes to avoid 404 on direct navigation
 @app.route("/")
 @app.route("/analytics")
@@ -604,29 +629,6 @@ app = Flask(__name__, static_folder="static")
 @app.route("/wifi")
 def index():
     return render_template_string(HTML)
-
-@app.route("/video1")
-def video1():
-    return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
-
-@app.route("/current")
-def current():
-    out=[]
-    # return stable id for each detection so image -> data mapping remains correct
-    for i, d in enumerate(last_detections[:16]):
-        # stable-ish short id for this detection object while it exists in memory
-        img_id = hashlib.md5(str(id(d)).encode()).hexdigest()[:8]
-        out.append({
-            "id": img_id,
-            "name": d.get("name",""),
-            "categories": ";".join(d.get("categories") or []),
-            "zone": d.get("zone",""),
-            "gender": d.get("gender",""),
-            "age": d.get("age",""),
-            "has_img": True if d.get("img") is not None else False,
-            "has_face": True if d.get("face") is not None else False
-        })
-    return jsonify(out)
 
 @app.route("/current_img/<int:idx>")
 def current_img(idx):
@@ -658,38 +660,87 @@ def current_img_id(img_id):
             continue
     return make_response("", 404)
 
-@app.route("/alerts")
-def alerts_api():
+#created helper in 6B
+def get_alerts_data():
+
     combined = []
-    # read alert rows from CSV
+
     try:
+
         if os.path.exists(LOG_FILE):
+
             df = pd.read_csv(LOG_FILE)
+
             if "alert" in df.columns:
-                df2 = df[df["alert"].notna() & (df["alert"].astype(str) != "")]
-                df2 = df2.sort_values("timestamp", ascending=False).head(200)
+
+                df2 = df[
+                    df["alert"].notna()
+                    &
+                    (
+                        df["alert"]
+                        .astype(str)
+                        != ""
+                    )
+                ]
+
+                df2 = (
+                    df2.sort_values(
+                        "timestamp",
+                        ascending=False
+                    )
+                    .head(200)
+                )
+
                 for _, r in df2.iterrows():
+
                     combined.append({
-                        "timestamp": str(r.get("timestamp") or ""),
-                        "alert_type": str(r.get("alert") or ""),
-                        "info": f"name={r.get('name','')} zone={r.get('zone','')}"
+                        "timestamp":
+                            str(
+                                r.get(
+                                    "timestamp"
+                                ) or ""
+                            ),
+                        "alert_type":
+                            str(
+                                r.get(
+                                    "alert"
+                                ) or ""
+                            ),
+                        "info":
+                            f"name={r.get('name','')} zone={r.get('zone','')}"
                     })
-    except Exception as e:
-        print("alerts_api read error:", e)
 
-    # prepend in-memory alerts (limit)
+    except Exception:
+        pass
+
     for a in alert_service.alerts[:10]:
-        combined.insert(0, a)
 
-    # dedupe while preserving order
-    seen = set(); out = []
+        combined.insert(
+            0,
+            a
+        )
+
+    seen = set()
+
+    out = []
+
     for c in combined:
-        key = (c.get("timestamp",""), c.get("alert_type",""), c.get("info",""))
-        if key in seen: continue
-        seen.add(key); out.append(c)
 
-    # return only latest 10 alerts to the UI
-    return jsonify(out[:10])
+        key = (
+            c.get("timestamp", ""),
+            c.get("alert_type", ""),
+            c.get("info", "")
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        out.append(c)
+
+    return out[:10]
+#end helper
 
 @app.route("/upload_image", methods=["POST"])
 def upload_image():
@@ -795,9 +846,7 @@ def _build_analytics_from_sample(sample_df):
         "age_buckets_per_day": age_buckets_per_day,
         "age_gender_map": age_gender_map
     }
-
-@app.route("/analytics_data")
-def analytics_data():
+def build_analytics_data():
     """ Return analytics structure used by the frontend. Primary source: LOG_FILE (detections_log.csv) where each detection writes a timestamp and zone/gender/age_bucket. Fallback (manual): SAMPLE_FILE (popular_times_sample.csv) if present and LOG_FILE doesn't have enough data. """
     try:
         # if LOG_FILE exists and contains timestamped detections, prefer it
@@ -860,6 +909,17 @@ def analytics_data():
     except Exception as e:
         print("analytics_data error:", e)
         return jsonify({"days":[], "hours":[], "visitors_per_day":{}, "gender_counts_per_day":{}, "zones_per_day":{}, "age_buckets_per_day":{}, "age_gender_map":{}, "avg_wait_per_hour":{}})
+events_module.last_detections_ref = (
+    last_detections
+)
+
+events_module.alert_service_ref = (
+    get_alerts_data
+)
+
+events_module.analytics_func = (
+    build_analytics_data
+)
 
 # ---------- start ----------
 if __name__ == "__main__":
