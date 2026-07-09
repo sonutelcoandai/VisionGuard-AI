@@ -42,6 +42,9 @@ from app.ai_engine.analytics.age import (
 from app.ai_engine.analytics.gender import (
     GenderAnalyzer
 )
+from app.ai_engine.detector.person import (
+    PersonDetector
+)
 
 try:
     import cv2
@@ -108,6 +111,9 @@ age_analyzer = AgeAnalyzer(
 gender_analyzer = GenderAnalyzer(
     gender_net
 )
+person_detector = PersonDetector(
+    model
+)
 
 
 # ---------- helpers ----------
@@ -154,32 +160,24 @@ def generate_frames():
 
         detections = []
         det_list = []
-        results = None
-        if model is not None:
-            try:
-                results = model(frame, verbose=False)
-            except Exception as e:
-                print("YOLO inference error:", e)
-                results = None
-        boxes = None
-        if results and len(results)>0:
-            try:
-                boxes = results[0].boxes
-            except Exception:
-                boxes = None
+        boxes, results = person_detector.detect(frame)
         if boxes:
-            for box in boxes:
+            persons = (
+                person_detector.extract_persons(
+                    frame,
+                    boxes
+                )
+           )
+           
+            for person in persons:
                 try:
-                    cls = int(box.cls[0])
-                    name_cls = model.names[cls] if (hasattr(model,'names') and cls in model.names) else str(cls)
-                    if str(name_cls).lower() != "person":
-                        continue
-                    x1,y1,x2,y2 = map(int, box.xyxy[0].tolist())
-                    if x2<=x1 or y2<=y1:
-                        continue
-                    crop_bgr = frame[y1:y2, x1:x2]
-                    if crop_bgr.size == 0:
-                        continue
+                    x1, y1, x2, y2 = (
+                    person["bbox"]
+                    )
+
+                    crop_bgr = (
+                    person["crop"]
+                    )
                     person_name = "Unknown"
                     cats = []
                     face_roi = None
