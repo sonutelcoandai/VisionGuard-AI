@@ -55,6 +55,10 @@ from app.api.events import (
 )
 import app.api.events as events_module
 
+from app.api.users import (
+    users_bp
+)
+import app.api.users as users_module
 
 
 try:
@@ -618,6 +622,10 @@ app.register_blueprint(
     events_bp
 )
 
+app.register_blueprint(
+    users_bp
+)
+
 
 
 # serve SPA on common routes to avoid 404 on direct navigation
@@ -742,8 +750,7 @@ def get_alerts_data():
     return out[:10]
 #end helper
 
-@app.route("/upload_image", methods=["POST"])
-def upload_image():
+def upload_image_impl():
     try:
         file = request.files.get("image")
         name = (request.form.get("name") or "").strip()
@@ -758,13 +765,12 @@ def upload_image():
         df.loc[len(df)] = {"filename": out_fn, "name": name, "categories": categories}
         df.to_csv(FACES_CSV, index=False)
         global known_encodings, known_meta
-        known_encodings, known_meta = load_known_faces()
+        known_encodings, known_meta = (face_manager.load_known_faces())
         return redirect(url_for("index"))
     except Exception as e:
         return jsonify({"ok":False, "msg":str(e)}), 500
 
-@app.route("/upload_csv", methods=["POST"])
-def upload_csv():
+def upload_csv_impl():
     try:
         file = request.files.get("file")
         if not file:
@@ -775,14 +781,13 @@ def upload_csv():
                 return jsonify({"ok":False, "msg":"missing columns"}), 400
         df.to_csv(FACES_CSV, index=False)
         global known_encodings, known_meta
-        known_encodings, known_meta = load_known_faces()
+        known_encodings, known_meta = (face_manager.load_known_faces())
         return redirect(url_for("index"))
     except Exception as e:
         return jsonify({"ok":False, "msg":str(e)}), 500
 
-@app.route("/download_faces_csv")
-def download_faces_csv():
-    ensure_faces_csv()
+def download_faces_csv_impl():
+    face_manager.ensure_faces_csv()
     return send_file(FACES_CSV, as_attachment=True, download_name="faces.csv")
 
 def _build_analytics_from_sample(sample_df):
@@ -919,6 +924,18 @@ events_module.alert_service_ref = (
 
 events_module.analytics_func = (
     build_analytics_data
+)
+
+users_module.upload_image_func = (
+    upload_image_impl
+)
+
+users_module.upload_csv_func = (
+    upload_csv_impl
+)
+
+users_module.download_faces_csv_func = (
+    download_faces_csv_impl
 )
 
 # ---------- start ----------
