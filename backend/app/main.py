@@ -35,6 +35,13 @@ from app.ai_engine.analytics.behavior import (
     crosses_line,
     zone_of_point
 )
+from app.ai_engine.analytics.age import (
+    AgeAnalyzer
+)
+
+from app.ai_engine.analytics.gender import (
+    GenderAnalyzer
+)
 
 try:
     import cv2
@@ -93,6 +100,15 @@ model = model_manager.yolo
 age_net = model_manager.age_net
 
 gender_net = model_manager.gender_net
+
+age_analyzer = AgeAnalyzer(
+    age_net
+)
+
+gender_analyzer = GenderAnalyzer(
+    gender_net
+)
+
 
 # ---------- helpers ----------
 #added this code to behaviour.py
@@ -190,22 +206,12 @@ def generate_frames():
                     age_bucket, gender, gender_conf = None, None, None
                     if face_roi is not None and face_roi.size>0 and min(face_roi.shape[:2]) >= MIN_FACE_SIDE_PX:
                         try:
-                            if age_net is not None:
-                                blob = cv2.dnn.blobFromImage(face_roi, 1.0, (227,227), (78,87,114), swapRB=False)
-                                age_net.setInput(blob)
-                                a_scores = age_net.forward()[0]
-                                age_bucket = AGE_LIST[int(np.argmax(a_scores))]
+                            
+                              age_bucket = age_analyzer.predict(face_roi)
                         except Exception:
                             age_bucket = None
                         try:
-                            if gender_net is not None:
-                                blob = cv2.dnn.blobFromImage(face_roi, 1.0, (227,227), (78,87,114), swapRB=False)
-                                gender_net.setInput(blob)
-                                g_scores = gender_net.forward()[0]
-                                g_idx = int(np.argmax(g_scores))
-                                gender_conf = float(g_scores[g_idx])
-                                gender_raw = GENDER_LIST[g_idx]
-                                gender = gender_raw if gender_conf >= GENDER_CONF_THRESH else "Unknown"
+                            gender, gender_conf = (gender_analyzer.predict(face_roi))
                         except Exception:
                             gender, gender_conf = None, None
 
