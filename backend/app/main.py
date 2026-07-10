@@ -30,11 +30,6 @@ Those responsibilities are implemented in:
 import os
 import numpy as np
 
-from flask import (
-    Flask,
-    render_template
-)
-
 try:
     import cv2
 except Exception:
@@ -97,21 +92,9 @@ from app.ai_engine.recognition.face import (
 # API Blueprints
 # ============================================================
 
-from app.api.cameras import (
-    cameras_bp
-)
-
 import app.api.cameras as cameras_module
 
-from app.api.events import (
-    events_bp
-)
-
 import app.api.events as events_module
-
-from app.api.users import (
-    users_bp
-)
 
 import app.api.users as users_module
 
@@ -197,48 +180,13 @@ users_module.download_faces_csv_func = (
 # Flask Application
 # ============================================================
 
-app = Flask(
-    __name__,
-    static_folder="static"
+from app.create_app import (
+    create_app
 )
-
-# Register application modules.
-app.register_blueprint(
-    cameras_bp
-)
-
-app.register_blueprint(
-    events_bp
-)
-
-app.register_blueprint(
-    users_bp
-)
-
-
+app = create_app()
 # ============================================================
 # Dashboard Routes
 # ============================================================
-
-@app.route("/")
-@app.route("/analytics")
-@app.route("/inventory")
-@app.route("/offers")
-@app.route("/dashboard")
-@app.route("/wifi")
-def index():
-    """
-    Serve the VisionGuard dashboard.
-
-    These routes all render the same SPA entry page
-    so browser refreshes on nested routes don't
-    generate 404 errors.
-    """
-
-    return render_template(
-        "index.html"
-    )
-
 
 # ============================================================
 # Application Startup
