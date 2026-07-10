@@ -78,6 +78,20 @@ except Exception:
 # ---------------- CONFIG ----------------
 
 from app.core.config import *
+os.makedirs(
+    KNOWN_IMAGES_DIR,
+    exist_ok=True
+)
+
+os.makedirs(
+    os.path.dirname(LOG_FILE),
+    exist_ok=True
+)
+
+os.makedirs(
+    os.path.dirname(SAMPLE_FILE),
+    exist_ok=True
+)
 
 from app.core.logger import (
     ensure_log_headers,
