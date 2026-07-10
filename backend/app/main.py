@@ -35,16 +35,7 @@ from app.ai_engine.analytics.behavior import (
     crosses_line,
     zone_of_point
 )
-from app.ai_engine.analytics.age import (
-    AgeAnalyzer
-)
 
-from app.ai_engine.analytics.gender import (
-    GenderAnalyzer
-)
-from app.ai_engine.detector.person import (
-    PersonDetector
-)
 from app.api.cameras import (
     cameras_bp
 )
@@ -60,11 +51,20 @@ from app.api.users import (
 )
 import app.api.users as users_module
 
-from app.ai_engine.analytics.crowd import (
-    CrowdTracker,
-    CrowdAnalytics
+from app.state.app_state import (
+    app_state
 )
 
+from app.services.face_service import (
+    face_service
+)
+
+from app.bootstrap.ai_bootstrap import (
+    ai_container
+)
+from app.services.event_service import (
+    event_service
+)
 
 
 try:
@@ -124,49 +124,20 @@ alert_service.add_alert(
 #above lines for test
 # ---------- known faces ----------
 
-known_encodings, known_meta = (
-    face_manager.load_known_faces()
-)
 # ---------- logging ----------
 
 ensure_log_headers()
-
-model_manager.load_models()
-
-model = model_manager.yolo
-
-age_net = model_manager.age_net
-
-gender_net = model_manager.gender_net
-
-age_analyzer = AgeAnalyzer(
-    age_net
-)
-
-gender_analyzer = GenderAnalyzer(
-    gender_net
-)
-person_detector = PersonDetector(
-    model
-)
-crowd_tracker = CrowdTracker()
-
-crowd_analytics = (
-    CrowdAnalytics()
-)
 
 
 # ---------- helpers ----------
 #added this code to behaviour.py
 # ---------- state ----------
-last_detections = []
-entered_hourly = {}
-exited_hourly = {}
+#moved these lines to app_state.py
 
 # ---------- capture & detection ----------
 
 def generate_frames():
-    global last_detections, tracks, next_tid, entered_hourly, exited_hourly, alerts
+    global tracks, next_tid
     cap = open_capture(IP_CAMERA_URL)
     if cap is None or not cap.isOpened():
         while True:
@@ -198,10 +169,10 @@ def generate_frames():
 
         detections = []
         det_list = []
-        boxes, results = person_detector.detect(frame)
+        boxes, results = ai_container.person_detector.detect(frame)
         if boxes:
             persons = (
-                person_detector.extract_persons(
+                ai_container.person_detector.extract_persons(
                     frame,
                     boxes
                 )
@@ -216,34 +187,24 @@ def generate_frames():
                     crop_bgr = (
                     person["crop"]
                     )
-                    person_name = "Unknown"
-                    cats = []
-                    face_roi = None
-                    if face_recognition is not None:
-                        try:
-                            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-                            locs = face_recognition.face_locations(crop_rgb, number_of_times_to_upsample=FACE_UPSAMPLE, model=FACE_DETECTOR_MODEL)
-                            if locs:
-                                encs = face_recognition.face_encodings(crop_rgb, known_face_locations=locs, num_jitters=ENCODER_JITTERS, model=ENCODER_MODEL)
-                                if encs and known_encodings:
-                                    dists = face_recognition.face_distance(known_encodings, encs[0])
-                                    if len(dists)>0 and float(np.min(dists)) < FACE_MATCH_THRESHOLD:
-                                        idx = int(np.argmin(dists))
-                                        person_name = known_meta[idx]['name']
-                                        cats = known_meta[idx]['categories']
-                                top,right,bottom,left = locs[0]
-                                h,w = crop_bgr.shape[:2]
-                                pad_y = int(PAD_RATIO * (bottom-top)); pad_x = int(PAD_RATIO * (right-left))
-                                t = max(0, top-pad_y); b2 = min(h, bottom+pad_y); l = max(0, left-pad_x); r2 = min(w, right+pad_x)
-                                if b2>t and r2>l:
-                                    face_roi = crop_bgr[t:b2, l:r2].copy()
-                        except Exception:
-                            pass
+                    (
+    person_name,
+    cats,
+    face_roi
+) = (
+    ai_container.identity_recognizer.recognize(
+        crop_bgr
+    )
+)
                     age_bucket, gender, gender_conf = None, None, None
                     if face_roi is not None and face_roi.size>0 and min(face_roi.shape[:2]) >= MIN_FACE_SIDE_PX:
                         try:
                             
-                              age_bucket = age_analyzer.predict(face_roi)
+                              age_bucket = (
+    ai_container
+    .age_analyzer
+    .predict(face_roi)
+)
                         except Exception:
                             age_bucket = None
                         try:
@@ -285,7 +246,7 @@ def generate_frames():
 
         # tracking update
         tracks = (
-            crowd_tracker.update_tracks(
+            ai_container.crowd_tracker.update_tracks(
                 det_list
             )
         )
@@ -295,10 +256,10 @@ def generate_frames():
 
         # queue & crowd detection
         crowd_stats = (
-             crowd_analytics.process(
+             ai_container.crowd_analytics.process(
         tracks=tracks,
-        entered_hourly=entered_hourly,
-        exited_hourly=exited_hourly,
+        entered_hourly=app_state.entered_hourly,
+        exited_hourly=app_state.exited_hourly,
         count_lines=COUNT_LINES,
         zones=ZONES,
         queue_thresh=QUEUE_THRESH,
@@ -308,7 +269,7 @@ def generate_frames():
         alert_service=alert_service
     )
 )
-        last_detections = detections[:16]
+        app_state.last_detections = detections[:16]
         if cv2 is not None:
             _, buffer = cv2.imencode('.jpg', frame)
             yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
@@ -356,9 +317,9 @@ def index():
 @app.route("/current_img/<int:idx>")
 def current_img(idx):
     # keep old endpoint (index-based) for backward compatibility
-    if idx < 0 or idx >= len(last_detections):
+    if idx < 0 or idx >= len(app_state.last_detections):
         return make_response("", 404)
-    img = last_detections[idx].get("img")
+    img = app_state.last_detections[idx].get("img")
     if img is None:
         return make_response("", 404)
     ok, buf = cv2.imencode(".jpg", img)
@@ -369,7 +330,7 @@ def current_img(idx):
 @app.route("/current_img_id/<string:img_id>")
 def current_img_id(img_id):
     # new: return image by stable id generated in /current
-    for d in last_detections:
+    for d in app_state.last_detections:
         try:
             if hashlib.md5(str(id(d)).encode()).hexdigest()[:8] == img_id:
                 img = d.get("img")
@@ -384,126 +345,9 @@ def current_img_id(img_id):
     return make_response("", 404)
 
 #created helper in 6B
-def get_alerts_data():
-
-    combined = []
-
-    try:
-
-        if os.path.exists(LOG_FILE):
-
-            df = pd.read_csv(LOG_FILE)
-
-            if "alert" in df.columns:
-
-                df2 = df[
-                    df["alert"].notna()
-                    &
-                    (
-                        df["alert"]
-                        .astype(str)
-                        != ""
-                    )
-                ]
-
-                df2 = (
-                    df2.sort_values(
-                        "timestamp",
-                        ascending=False
-                    )
-                    .head(200)
-                )
-
-                for _, r in df2.iterrows():
-
-                    combined.append({
-                        "timestamp":
-                            str(
-                                r.get(
-                                    "timestamp"
-                                ) or ""
-                            ),
-                        "alert_type":
-                            str(
-                                r.get(
-                                    "alert"
-                                ) or ""
-                            ),
-                        "info":
-                            f"name={r.get('name','')} zone={r.get('zone','')}"
-                    })
-
-    except Exception:
-        pass
-
-    for a in alert_service.alerts[:10]:
-
-        combined.insert(
-            0,
-            a
-        )
-
-    seen = set()
-
-    out = []
-
-    for c in combined:
-
-        key = (
-            c.get("timestamp", ""),
-            c.get("alert_type", ""),
-            c.get("info", "")
-        )
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-
-        out.append(c)
-
-    return out[:10]
 #end helper
 
-def upload_image_impl():
-    try:
-        file = request.files.get("image")
-        name = (request.form.get("name") or "").strip()
-        categories = (request.form.get("categories") or "").strip()
-        if not file or not name:
-            return jsonify({"ok":False, "msg":"invalid"}), 400
-        fn = secure_filename(file.filename)
-        out_fn = f"{uuid.uuid4().hex}_{fn}"
-        out_path = os.path.join(KNOWN_IMAGES_DIR, out_fn)
-        file.save(out_path)
-        df = pd.read_csv(FACES_CSV) if os.path.exists(FACES_CSV) else pd.DataFrame(columns=["filename","name","categories"])
-        df.loc[len(df)] = {"filename": out_fn, "name": name, "categories": categories}
-        df.to_csv(FACES_CSV, index=False)
-        global known_encodings, known_meta
-        known_encodings, known_meta = (face_manager.load_known_faces())
-        return redirect(url_for("index"))
-    except Exception as e:
-        return jsonify({"ok":False, "msg":str(e)}), 500
 
-def upload_csv_impl():
-    try:
-        file = request.files.get("file")
-        if not file:
-            return jsonify({"ok":False, "msg":"no file"}), 400
-        df = pd.read_csv(file)
-        for col in ["filename","name","categories"]:
-            if col not in df.columns:
-                return jsonify({"ok":False, "msg":"missing columns"}), 400
-        df.to_csv(FACES_CSV, index=False)
-        global known_encodings, known_meta
-        known_encodings, known_meta = (face_manager.load_known_faces())
-        return redirect(url_for("index"))
-    except Exception as e:
-        return jsonify({"ok":False, "msg":str(e)}), 500
-
-def download_faces_csv_impl():
-    face_manager.ensure_faces_csv()
-    return send_file(FACES_CSV, as_attachment=True, download_name="faces.csv")
 
 def _build_analytics_from_sample(sample_df):
     """ sample_df expected to contain columns: date (YYYY-MM-DD), hour (HH:00), visitors (int), wait_time (optional numeric), zone (optional), gender (optional), age_bucket (optional)
@@ -630,11 +474,11 @@ def build_analytics_data():
         print("analytics_data error:", e)
         return jsonify({"days":[], "hours":[], "visitors_per_day":{}, "gender_counts_per_day":{}, "zones_per_day":{}, "age_buckets_per_day":{}, "age_gender_map":{}, "avg_wait_per_hour":{}})
 events_module.last_detections_ref = (
-    last_detections
+    app_state.last_detections
 )
 
 events_module.alert_service_ref = (
-    get_alerts_data
+    event_service.get_alerts
 )
 
 events_module.analytics_func = (
@@ -642,15 +486,15 @@ events_module.analytics_func = (
 )
 
 users_module.upload_image_func = (
-    upload_image_impl
+    face_service.upload_image
 )
 
 users_module.upload_csv_func = (
-    upload_csv_impl
+    face_service.upload_csv
 )
 
 users_module.download_faces_csv_func = (
-    download_faces_csv_impl
+    face_service.download_faces_csv
 )
 
 # ---------- start ----------
