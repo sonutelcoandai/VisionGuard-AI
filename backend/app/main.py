@@ -61,7 +61,8 @@ from app.api.users import (
 import app.api.users as users_module
 
 from app.ai_engine.analytics.crowd import (
-    CrowdTracker
+    CrowdTracker,
+    CrowdAnalytics
 )
 
 
@@ -149,6 +150,10 @@ person_detector = PersonDetector(
     model
 )
 crowd_tracker = CrowdTracker()
+
+crowd_analytics = (
+    CrowdAnalytics()
+)
 
 
 # ---------- helpers ----------
@@ -286,25 +291,23 @@ def generate_frames():
         )
 
         # line crossing counts
-        for tid, tr in tracks.items():
-            if "last" in tr and "now" in tr:
-                if crosses_line(tr["last"], tr["now"], COUNT_LINES["entry"]):
-                    hk = datetime.now().strftime("%Y-%m-%d %H:00")
-                    entered_hourly.setdefault(hk, {"total":0,"Male":0,"Female":0,"Unknown":0})
-                    entered_hourly[hk]["total"] += 1
-                if crosses_line(tr["last"], tr["now"], COUNT_LINES["exit"]):
-                    hk = datetime.now().strftime("%Y-%m-%d %H:00")
-                    exited_hourly.setdefault(hk, {"total":0,"Male":0,"Female":0,"Unknown":0})
-                    exited_hourly[hk]["total"] += 1
+        
 
         # queue & crowd detection
-        queue_count = sum(1 for tr in tracks.values() if tr.get("now") and point_in_poly(tr["now"], ZONES["billing"]))
-        crowd_count = sum(1 for tr in tracks.values() if tr.get("now") and point_in_poly(tr["now"], ZONES["crowd1"]))
-        if queue_count > QUEUE_THRESH:
-            alert_service.add_alert("queue_overflow", f"Queue overflow: {queue_count} persons at billing. Open extra counter.", zone="billing")
-        if crowd_count > CROWD_THRESH:
-            alert_service.add_alert("crowd", f"Crowd: {crowd_count} persons in crowd area. Check safety.", zone="crowd1")
-
+        crowd_stats = (
+             crowd_analytics.process(
+        tracks=tracks,
+        entered_hourly=entered_hourly,
+        exited_hourly=exited_hourly,
+        count_lines=COUNT_LINES,
+        zones=ZONES,
+        queue_thresh=QUEUE_THRESH,
+        crowd_thresh=CROWD_THRESH,
+        point_in_poly=point_in_poly,
+        crosses_line=crosses_line,
+        alert_service=alert_service
+    )
+)
         last_detections = detections[:16]
         if cv2 is not None:
             _, buffer = cv2.imencode('.jpg', frame)
