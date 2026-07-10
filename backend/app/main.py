@@ -64,7 +64,9 @@ from app.ai_engine.analytics.crowd import (
     CrowdTracker,
     CrowdAnalytics
 )
-
+from app.ai_engine.recognition.identity import (
+    IdentityRecognizer
+)
 
 
 try:
@@ -149,6 +151,20 @@ gender_analyzer = GenderAnalyzer(
 person_detector = PersonDetector(
     model
 )
+identity_recognizer = (
+    IdentityRecognizer(
+        face_recognition,
+        known_encodings,
+        known_meta,
+        FACE_MATCH_THRESHOLD,
+        FACE_UPSAMPLE,
+        FACE_DETECTOR_MODEL,
+        ENCODER_JITTERS,
+        ENCODER_MODEL,
+        PAD_RATIO
+    )
+)
+
 crowd_tracker = CrowdTracker()
 
 crowd_analytics = (
@@ -216,29 +232,15 @@ def generate_frames():
                     crop_bgr = (
                     person["crop"]
                     )
-                    person_name = "Unknown"
-                    cats = []
-                    face_roi = None
-                    if face_recognition is not None:
-                        try:
-                            crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
-                            locs = face_recognition.face_locations(crop_rgb, number_of_times_to_upsample=FACE_UPSAMPLE, model=FACE_DETECTOR_MODEL)
-                            if locs:
-                                encs = face_recognition.face_encodings(crop_rgb, known_face_locations=locs, num_jitters=ENCODER_JITTERS, model=ENCODER_MODEL)
-                                if encs and known_encodings:
-                                    dists = face_recognition.face_distance(known_encodings, encs[0])
-                                    if len(dists)>0 and float(np.min(dists)) < FACE_MATCH_THRESHOLD:
-                                        idx = int(np.argmin(dists))
-                                        person_name = known_meta[idx]['name']
-                                        cats = known_meta[idx]['categories']
-                                top,right,bottom,left = locs[0]
-                                h,w = crop_bgr.shape[:2]
-                                pad_y = int(PAD_RATIO * (bottom-top)); pad_x = int(PAD_RATIO * (right-left))
-                                t = max(0, top-pad_y); b2 = min(h, bottom+pad_y); l = max(0, left-pad_x); r2 = min(w, right+pad_x)
-                                if b2>t and r2>l:
-                                    face_roi = crop_bgr[t:b2, l:r2].copy()
-                        except Exception:
-                            pass
+                    (
+    person_name,
+    cats,
+    face_roi
+) = (
+    identity_recognizer.recognize(
+        crop_bgr
+    )
+)
                     age_bucket, gender, gender_conf = None, None, None
                     if face_roi is not None and face_roi.size>0 and min(face_roi.shape[:2]) >= MIN_FACE_SIDE_PX:
                         try:
