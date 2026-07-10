@@ -60,6 +60,11 @@ from app.api.users import (
 )
 import app.api.users as users_module
 
+from app.ai_engine.analytics.crowd import (
+    CrowdTracker
+)
+
+
 
 try:
     import cv2
@@ -143,6 +148,7 @@ gender_analyzer = GenderAnalyzer(
 person_detector = PersonDetector(
     model
 )
+crowd_tracker = CrowdTracker()
 
 
 # ---------- helpers ----------
@@ -151,8 +157,6 @@ person_detector = PersonDetector(
 last_detections = []
 entered_hourly = {}
 exited_hourly = {}
-tracks = {}
-next_tid = 1
 
 # ---------- capture & detection ----------
 
@@ -275,32 +279,11 @@ def generate_frames():
                     continue
 
         # tracking update
-        t_now = time.time()
-        for tid in list(tracks.keys()):
-            if t_now - tracks[tid]["last_seen"] > 3.0:
-                del tracks[tid]
-        used = set()
-        global next_tid
-        for d in det_list:
-            cx,cy = d["center"]
-            best_tid, best_dist = None, 9999
-            for tid, tr in tracks.items():
-                px,py = tr["now"]
-                dist = math.hypot(cx-px, cy-py)
-                if dist < 120 and dist < best_dist and tid not in used:
-                    best_dist, best_tid = dist, tid
-            if best_tid is None:
-                tid = next_tid; next_tid += 1
-                tracks[tid] = {"last": (cx,cy), "now":(cx,cy), "last_seen": t_now, "gender": d.get("gender"), "age": d.get("age")}
-                used.add(tid)
-            else:
-                tr = tracks[best_tid]
-                tr["last"] = tr["now"]; tr["now"] = (cx,cy); tr["last_seen"] = t_now
-                if not tr.get("gender") and d.get("gender"):
-                    tr["gender"] = d.get("gender")
-                if not tr.get("age") and d.get("age"):
-                    tr["age"] = d.get("age")
-                used.add(best_tid)
+        tracks = (
+            crowd_tracker.update_tracks(
+                det_list
+            )
+        )
 
         # line crossing counts
         for tid, tr in tracks.items():
