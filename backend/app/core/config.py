@@ -1,14 +1,41 @@
 import os
+BASE_DIR = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "../../.."
+    )
+)
 
-MODEL_PATH = "yolov8n.pt"
+MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "models",
+    "yolo",
+    "yolov8n.pt"
+)
+
 
 IP_CAMERA_URL = 0
 
-LOG_FILE = "detections_log.csv"
+LOG_FILE = os.path.join(
+    BASE_DIR,
+    "storage",
+    "reports",
+    "detections_log.csv"
+)
 
-SAMPLE_FILE = "popular_times_sample.csv"
+SAMPLE_FILE = os.path.join(
+    BASE_DIR,
+    "storage",
+    "reports",
+    "popular_times_sample.csv"
+)
 
-KNOWN_DIR = "known_faces"
+
+KNOWN_DIR = os.path.join(
+    BASE_DIR,
+    "data",
+    "faces"
+)
 
 KNOWN_IMAGES_DIR = os.path.join(
     KNOWN_DIR,
